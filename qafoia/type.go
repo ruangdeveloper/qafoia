@@ -37,6 +37,8 @@ type ExecutedMigration struct {
 }
 
 type Config struct {
-	Driver            Driver
-	MigrationFilesDir string
+	Driver             Driver
+	MigrationFilesDir  string
+	MigrationTableName string
+	DebugSql           bool
 }

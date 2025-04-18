@@ -3,6 +3,7 @@ package qafoia
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -190,7 +191,6 @@ func printTable(data [][]string) {
 		return
 	}
 
-	// Calculate max width for each column
 	colWidths := make([]int, len(data[0]))
 	for _, row := range data {
 		for colIdx, col := range row {
@@ -200,7 +200,6 @@ func printTable(data [][]string) {
 		}
 	}
 
-	// Helper to print a row with borders
 	printRow := func(row []string) {
 		fmt.Print("|")
 		for i, col := range row {
@@ -210,7 +209,6 @@ func printTable(data [][]string) {
 		fmt.Println()
 	}
 
-	// Helper to print separator
 	printSeparator := func() {
 		fmt.Print("+")
 		for _, width := range colWidths {
@@ -219,12 +217,10 @@ func printTable(data [][]string) {
 		fmt.Println()
 	}
 
-	// Print header
 	printSeparator()
 	printRow(data[0])
 	printSeparator()
 
-	// Print remaining rows
 	for _, row := range data[1:] {
 		printRow(row)
 	}
@@ -232,10 +228,10 @@ func printTable(data [][]string) {
 
 }
 
-func sanitizeMigrationName(name string) string {
-	notAllowedChars := []string{" ", "-", ".", "/", "\\", ":", "?", "*", "\"", "<", ">", "|", "(", ")", "{", "}"}
-	for _, char := range notAllowedChars {
-		name = strings.ReplaceAll(name, char, "_")
+func sanitizeMigrationName(name string) (string, error) {
+	valid := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+	if !valid.MatchString(name) {
+		return "", fmt.Errorf("invalid migration name: %s", name)
 	}
 	name = strings.ToLower(name)
 	name = strings.TrimSpace(name)
@@ -243,5 +239,21 @@ func sanitizeMigrationName(name string) string {
 	if len(name) > 200 {
 		name = name[:200]
 	}
-	return name
+	return name, nil
+}
+
+func sanitizeTableName(name string) (string, error) {
+	valid := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+	if !valid.MatchString(name) {
+		return "", fmt.Errorf("invalid table name: %s", name)
+	}
+
+	return name, nil
+}
+
+func ternary[T any](condition bool, a, b T) T {
+	if condition {
+		return a
+	}
+	return b
 }

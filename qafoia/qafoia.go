@@ -22,6 +22,7 @@ type Qafoia interface {
 type qafoiaImplementation struct {
 	driver            Driver
 	migrationFilesDir string
+	debugSql          bool
 }
 
 func New(config *Config) (*qafoiaImplementation, error) {
@@ -37,13 +38,25 @@ func New(config *Config) (*qafoiaImplementation, error) {
 		config.MigrationFilesDir = "migrations"
 	}
 
-	qafoia := &qafoiaImplementation{
-		driver:            config.Driver,
-		migrationFilesDir: config.MigrationFilesDir,
+	if config.MigrationTableName == "" {
+		config.MigrationTableName = "migrations"
+	}
+
+	_, err := sanitizeTableName(config.MigrationTableName)
+	if err != nil {
+		return nil, err
 	}
 
 	if !migrationDirExists(config.MigrationFilesDir) {
 		return nil, ErrMigrationDirNotExists
+	}
+
+	config.Driver.SetMigrationTableName(config.MigrationTableName)
+
+	qafoia := &qafoiaImplementation{
+		driver:            config.Driver,
+		migrationFilesDir: config.MigrationFilesDir,
+		debugSql:          config.DebugSql,
 	}
 
 	return qafoia, nil
@@ -54,7 +67,11 @@ func (q *qafoiaImplementation) Create(fileName string) error {
 		return ErrMigrationNameNotProvided
 	}
 
-	fileName = sanitizeMigrationName(fileName)
+	fileName, err := sanitizeMigrationName(fileName)
+	if err != nil {
+		return err
+	}
+
 	timestamp := time.Now().Format("20060102150405")
 	name := fmt.Sprintf("%s/%s_%s", q.migrationFilesDir, timestamp, fileName)
 	upName := fmt.Sprintf("%s.up.sql", name)
@@ -64,7 +81,7 @@ func (q *qafoiaImplementation) Create(fileName string) error {
 		return ErrMigrationFileAlreadyExists
 	}
 
-	_, err := os.Create(upName)
+	_, err = os.Create(upName)
 	if err != nil {
 		return err
 	}
@@ -116,14 +133,16 @@ func (q *qafoiaImplementation) Migrate(ctx context.Context) error {
 		ctx,
 		migrationsToApply,
 		func(migration *MigrationFile) {
-			log.Printf("running: %s\n", migration.BaseName)
+			log.Printf("migrating: %s\n", migration.BaseName)
+			if q.debugSql {
+				log.Printf("running SQL: %s\n", string(migration.UpSql))
+			}
 		},
 		func(migration *MigrationFile) {
-			log.Printf("done: %s\n", migration.BaseName)
+			log.Printf("migrated: %s\n", migration.BaseName)
 		},
 		func(migration *MigrationFile, err error) {
-			log.Printf("failed: %s\n", migration.BaseName)
-			log.Printf("error: %v\n", err)
+			log.Printf("migration failed: %s - %s\n", migration.BaseName, err.Error())
 		},
 	)
 }
@@ -178,7 +197,7 @@ func (q *qafoiaImplementation) Rollback(ctx context.Context, step int) error {
 	}
 
 	if len(executedMigrations) == 0 {
-		log.Println("no migrations to roll back")
+		log.Println("no migrations to rollback")
 		return nil
 	}
 
@@ -199,7 +218,7 @@ func (q *qafoiaImplementation) Rollback(ctx context.Context, step int) error {
 	}
 
 	if len(migrationsToRollback) == 0 {
-		log.Println("no migrations to roll back")
+		log.Println("no migrations to rollback")
 	}
 
 	return q.driver.UnapplyMigrations(
@@ -207,13 +226,15 @@ func (q *qafoiaImplementation) Rollback(ctx context.Context, step int) error {
 		migrationsToRollback,
 		func(migration *MigrationFile) {
 			log.Printf("rolling back: %s\n", migration.BaseName)
+			if q.debugSql {
+				log.Printf("running SQL: %s\n", string(migration.DownSql))
+			}
 		},
 		func(migration *MigrationFile) {
 			log.Printf("rolled back: %s\n", migration.BaseName)
 		},
 		func(migration *MigrationFile, err error) {
-			log.Printf("failed to roll back: %s\n", migration.BaseName)
-			log.Printf("error: %v\n", err)
+			log.Printf("rollback failed: %s - %s\n", migration.BaseName, err.Error())
 		},
 	)
 }

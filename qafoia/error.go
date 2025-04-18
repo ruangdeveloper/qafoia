@@ -11,4 +11,5 @@ var (
 	ErrMigrationFileAlreadyExists = errors.New("migration file already exists")
 	ErrMigrationFileNotFound      = errors.New("migration file not found")
 	ErrInvalidRollbackStep        = errors.New("invalid rollback step")
+	ErrEmbeddedFSNotProvided      = errors.New("embedded fs not provided")
 )
