@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -83,79 +85,104 @@ func (m *MySqlDriver) CreateMigrationsTable(ctx context.Context) error {
 }
 
 func (m *MySqlDriver) GetExecutedMigrations(ctx context.Context, reverse bool) ([]ExecutedMigration, error) {
-	query := fmt.Sprintf(`SELECT name, executed_at FROM %s ORDER BY name %s`, m.migrationTableName, ternary(reverse, "DESC", "ASC"))
-	rows, err := m.db.QueryContext(ctx, query)
+	order := "ASC"
+	if reverse {
+		order = "DESC"
+	}
 
+	query := fmt.Sprintf(`SELECT name, executed_at FROM %s ORDER BY name %s`, m.migrationTableName, order)
+
+	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var migrations []ExecutedMigration
+	migrations := []ExecutedMigration{}
+
 	for rows.Next() {
-		var executedMigrationName string
-		var executedMigrationTime time.Time
-		if err := rows.Scan(&executedMigrationName, &executedMigrationTime); err != nil {
+		var name string
+		var executedAt time.Time
+
+		if err := rows.Scan(&name, &executedAt); err != nil {
 			return nil, err
 		}
+
 		migrations = append(migrations, ExecutedMigration{
-			ExecutedAt: executedMigrationTime,
-			Name:       executedMigrationName,
+			Name:       name,
+			ExecutedAt: executedAt,
 		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return migrations, nil
 }
 
 func (m *MySqlDriver) CleanDatabase(ctx context.Context) error {
+	// Disable foreign key checks to drop tables in any order
 	_, err := m.db.ExecContext(ctx, `SET FOREIGN_KEY_CHECKS = 0;`)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to disable FK checks: %w", err)
 	}
 
+	// Query all table names in the current database
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT table_name 
 		FROM information_schema.tables 
-		WHERE table_schema = DATABASE(); -- use current DB
+		WHERE table_schema = DATABASE();
 	`)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to query tables: %w", err)
 	}
 	defer rows.Close()
 
+	var tableNames []string
 	for rows.Next() {
 		var table string
 		if err := rows.Scan(&table); err != nil {
-			return err
+			return fmt.Errorf("failed to scan table name: %w", err)
 		}
-
-		_, err := m.db.ExecContext(ctx, fmt.Sprintf("DROP TABLE `%s`;", table))
-		if err != nil {
-			return fmt.Errorf("failed to drop table %s: %w", table, err)
-		}
+		tableNames = append(tableNames, fmt.Sprintf("`%s`", table))
 	}
 
+	// If no tables, skip drop
+	if len(tableNames) == 0 {
+		return nil
+	}
+
+	// Drop all tables in a single statement
+	dropSQL := fmt.Sprintf("DROP TABLE %s;", strings.Join(tableNames, ", "))
+	_, err = m.db.ExecContext(ctx, dropSQL)
+	if err != nil {
+		return fmt.Errorf("failed to drop tables: %w", err)
+	}
+
+	// Re-enable foreign key checks
 	_, err = m.db.ExecContext(ctx, `SET FOREIGN_KEY_CHECKS = 1;`)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to re-enable FK checks: %w", err)
 	}
 
+	log.Println("all tables dropped successfully")
 	return nil
 }
 
-func (m *MySqlDriver) ApplyMigrations(ctx context.Context, migrations MigrationFiles, onRunning func(migration *MigrationFile), onSuccess func(migration *MigrationFile), onFailed func(migration *MigrationFile, err error)) error {
+func (m *MySqlDriver) ApplyMigrations(ctx context.Context, migrations []Migration, onRunning func(migration *Migration), onSuccess func(migration *Migration), onFailed func(migration *Migration, err error)) error {
 	for _, migration := range migrations {
 		if onRunning != nil {
 			onRunning(&migration)
 		}
-		err := m.executeMigrationSQL(ctx, migration.UpSql)
+		err := m.executeMigrationSQL(ctx, []byte(migration.UpScript()))
 		if err != nil {
 			if onFailed != nil {
 				onFailed(&migration, err)
 			}
 			return err
 		}
-		err = m.insertExecutedMigration(ctx, migration.BaseName, time.Now())
+		err = m.insertExecutedMigration(ctx, migration.Name(), time.Now())
 		if err != nil {
 			if onFailed != nil {
 				onFailed(&migration, err)
@@ -170,19 +197,19 @@ func (m *MySqlDriver) ApplyMigrations(ctx context.Context, migrations MigrationF
 	return nil
 }
 
-func (m *MySqlDriver) UnapplyMigrations(ctx context.Context, migrations MigrationFiles, onRunning func(migration *MigrationFile), onSuccess func(migration *MigrationFile), onFailed func(migration *MigrationFile, err error)) error {
+func (m *MySqlDriver) UnapplyMigrations(ctx context.Context, migrations []Migration, onRunning func(migration *Migration), onSuccess func(migration *Migration), onFailed func(migration *Migration, err error)) error {
 	for _, migration := range migrations {
 		if onRunning != nil {
 			onRunning(&migration)
 		}
-		err := m.executeMigrationSQL(ctx, migration.DownSql)
+		err := m.executeMigrationSQL(ctx, []byte(migration.DownScript()))
 		if err != nil {
 			if onFailed != nil {
 				onFailed(&migration, err)
 			}
 			return err
 		}
-		err = m.removeExecutedMigration(ctx, migration.BaseName)
+		err = m.removeExecutedMigration(ctx, migration.Name())
 		if err != nil {
 			if onFailed != nil {
 				onFailed(&migration, err)
@@ -196,8 +223,14 @@ func (m *MySqlDriver) UnapplyMigrations(ctx context.Context, migrations Migratio
 	return nil
 }
 
-func (m *MySqlDriver) executeMigrationSQL(ctx context.Context, sqlBytes []byte, args ...any) error {
-	_, err := m.db.ExecContext(ctx, string(sqlBytes), args...)
+func (m *MySqlDriver) executeMigrationSQL(ctx context.Context, sqlBytes []byte) error {
+	sql := string(sqlBytes)
+
+	if sql == "" {
+		return nil
+	}
+
+	_, err := m.db.ExecContext(ctx, string(sqlBytes))
 
 	if err != nil {
 		return err

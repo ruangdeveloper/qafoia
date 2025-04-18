@@ -73,11 +73,15 @@ func (p *PostgresDriver) CreateMigrationsTable(ctx context.Context) error {
 }
 
 func (p *PostgresDriver) GetExecutedMigrations(ctx context.Context, reverse bool) ([]ExecutedMigration, error) {
+	order := "ASC"
+	if reverse {
+		order = "DESC"
+	}
 	query := fmt.Sprintf(`
 		SELECT name, executed_at
 		FROM %s
 		ORDER BY name %s;
-	`, p.migrationTableName, ternary(reverse, "DESC", "ASC"))
+	`, p.migrationTableName, order)
 
 	rows, err := p.db.QueryContext(ctx, query)
 	if err != nil {

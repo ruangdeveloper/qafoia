@@ -42,3 +42,33 @@ type Config struct {
 	MigrationTableName string
 	DebugSql           bool
 }
+
+type Migration interface {
+	Name() string
+	UpScript() string
+	DownScript() string
+}
+
+type RegisteredMigration struct {
+	Name       string
+	UpScript   string
+	DownScript string
+	IsExecuted bool
+}
+
+type RegisteredMigrationList []RegisteredMigration
+
+func (m RegisteredMigrationList) Print() {
+	var tableData [][]string
+	tableData = append(tableData, []string{"Base Name", "Is Executed"})
+
+	for _, migration := range m {
+		row := []string{
+			migration.Name,
+			fmt.Sprintf("%t", migration.IsExecuted),
+		}
+		tableData = append(tableData, row)
+	}
+
+	printTable(tableData)
+}

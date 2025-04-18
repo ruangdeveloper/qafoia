@@ -2,21 +2,15 @@ package qafoia
 
 import (
 	"fmt"
+	"go/format"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
-)
 
-func findMigrationFile(baseName string, migrationFiles []MigrationFile) (*MigrationFile, bool) {
-	for _, migrationFile := range migrationFiles {
-		if migrationFile.BaseName == baseName {
-			return &migrationFile, true
-		}
-	}
-	return nil, false
-}
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+)
 
 func findExecutedMigration(baseName string, executedMigrations []ExecutedMigration) (*ExecutedMigration, bool) {
 	for _, executedMigration := range executedMigrations {
@@ -35,154 +29,6 @@ func fileExists(fileName string) bool {
 func migrationDirExists(migrationFilesDir string) bool {
 	_, err := os.Stat(migrationFilesDir)
 	return !os.IsNotExist(err)
-}
-
-func collectMigrationFiles(
-	migrationFilesDir string,
-) ([]MigrationFile, error) {
-	files, err := os.ReadDir(migrationFilesDir)
-	if err != nil {
-		return nil, err
-	}
-
-	upChan := make(chan struct {
-		baseName string
-		fileName string
-		sql      []byte
-	})
-	downChan := make(chan struct {
-		baseName string
-		fileName string
-		sql      []byte
-	})
-	errChan := make(chan error, 1)
-
-	var wg sync.WaitGroup
-
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-		wg.Add(1)
-		go func(file os.DirEntry) {
-			defer wg.Done()
-			fileName := file.Name()
-			switch {
-			case len(fileName) > 7 && fileName[len(fileName)-7:] == ".up.sql":
-				base := fileName[:len(fileName)-7]
-				upFilePath := fmt.Sprintf("%s/%s", migrationFilesDir, fileName)
-				upSql, err := os.ReadFile(upFilePath)
-				if err != nil {
-					select {
-					case errChan <- fmt.Errorf("failed to read up file %s: %w", fileName, err):
-					default:
-					}
-					return
-				}
-				upChan <- struct {
-					baseName string
-					fileName string
-					sql      []byte
-				}{base, fileName, upSql}
-			case len(fileName) > 9 && fileName[len(fileName)-9:] == ".down.sql":
-				base := fileName[:len(fileName)-9]
-				downFilePath := fmt.Sprintf("%s/%s", migrationFilesDir, fileName)
-				downSql, err := os.ReadFile(downFilePath)
-				if err != nil {
-					select {
-					case errChan <- fmt.Errorf("failed to read down file %s: %w", fileName, err):
-					default:
-					}
-					return
-				}
-				downChan <- struct {
-					baseName string
-					fileName string
-					sql      []byte
-				}{base, fileName, downSql}
-			default:
-				select {
-				case errChan <- fmt.Errorf("invalid migration file name %s: must end with .up.sql or .down.sql", fileName):
-				default:
-				}
-				return
-			}
-		}(file)
-	}
-
-	go func() {
-		wg.Wait()
-		close(upChan)
-		close(downChan)
-	}()
-
-	upNames := make(map[string]string)
-	upSqls := make(map[string][]byte)
-	downNames := make(map[string]string)
-	downSqls := make(map[string][]byte)
-
-	var innerWg sync.WaitGroup
-	innerWg.Add(2)
-
-	go func() {
-		defer innerWg.Done()
-		for up := range upChan {
-			upNames[up.baseName] = up.fileName
-			upSqls[up.baseName] = up.sql
-		}
-	}()
-
-	go func() {
-		defer innerWg.Done()
-		for down := range downChan {
-			downNames[down.baseName] = down.fileName
-			downSqls[down.baseName] = down.sql
-		}
-	}()
-
-	innerWg.Wait()
-
-	select {
-	case err := <-errChan:
-		return nil, err
-	default:
-	}
-
-	done := make(chan struct{})
-
-	go func() {
-		for up := range upChan {
-			upNames[up.baseName] = up.fileName
-		}
-	}()
-
-	go func() {
-		for down := range downChan {
-			downNames[down.baseName] = down.fileName
-		}
-		close(done)
-	}()
-
-	<-done
-
-	var migrationFiles []MigrationFile
-	for base, up := range upNames {
-		if down, ok := downNames[base]; ok {
-			migrationFiles = append(migrationFiles, MigrationFile{
-				BaseName: base,
-				UpName:   up,
-				DownName: down,
-				UpSql:    upSqls[base],
-				DownSql:  downSqls[base],
-			})
-		}
-	}
-
-	sort.Slice(migrationFiles, func(i, j int) bool {
-		return migrationFiles[i].BaseName < migrationFiles[j].BaseName
-	})
-
-	return migrationFiles, nil
 }
 
 func printTable(data [][]string) {
@@ -229,16 +75,21 @@ func printTable(data [][]string) {
 }
 
 func sanitizeMigrationName(name string) (string, error) {
-	valid := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
-	if !valid.MatchString(name) {
-		return "", fmt.Errorf("invalid migration name: %s", name)
-	}
+	name = strings.ReplaceAll(name, "-", "_")
+	name = strings.ReplaceAll(name, " ", "_")
+	name = strings.ReplaceAll(name, " ", "_")
 	name = strings.ToLower(name)
 	name = strings.TrimSpace(name)
 	name = strings.Trim(name, "_")
 	if len(name) > 200 {
 		name = name[:200]
 	}
+
+	valid := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+	if !valid.MatchString(name) {
+		return "", fmt.Errorf("invalid migration name: %s", name)
+	}
+
 	return name, nil
 }
 
@@ -251,9 +102,86 @@ func sanitizeTableName(name string) (string, error) {
 	return name, nil
 }
 
-func ternary[T any](condition bool, a, b T) T {
-	if condition {
-		return a
+func migrationNameToStructName(migrationName string) (string, error) {
+	// get the timestamp from prefix
+	re := regexp.MustCompile(`^\d{14}_`)
+	matches := re.FindStringSubmatch(migrationName)
+	if len(matches) == 0 {
+		return "", fmt.Errorf("invalid migration name: %s", migrationName)
 	}
-	return b
+	timestamp := strings.TrimRight(matches[0], "_")
+	// remove the timestamp from the name
+	nameWithoutTimestamp := strings.TrimPrefix(migrationName, timestamp)
+	fmt.Println(timestamp)
+	fmt.Println(nameWithoutTimestamp)
+
+	// split the name by underscore
+	parts := strings.Split(nameWithoutTimestamp, "_")
+	// capitalize the first letter of each part
+	for i, part := range parts {
+		parts[i] = cases.Title(language.English).String(part)
+	}
+	// join the parts together
+	structName := fmt.Sprintf("M%s%s", timestamp, strings.Join(parts, ""))
+
+	return structName, nil
+}
+
+func getPackageNameFromMigrationDir(migrationFilesDir string) string {
+	// get the last part of the migrationFilesDir
+	parts := strings.Split(migrationFilesDir, "/")
+	if len(parts) == 0 {
+		return "migrations"
+	}
+	return parts[len(parts)-1]
+}
+
+func migrationFileTemplate(packageName string, migrationName string) (string, error) {
+	structName, err := migrationNameToStructName(migrationName)
+	if err != nil {
+		return "", err
+	}
+
+	migrationTemplate := fmt.Sprintf(`
+		package %s
+
+		type %s struct {}
+
+		func (m *%s) Name() string {
+			return "%s"
+		}
+
+		func (m *%s) UpScript() string {
+			return ""
+		}
+
+		func (m *%s) DownScript() string {
+			return ""
+		}
+	`,
+		packageName,
+		structName,
+		structName,
+		migrationName,
+		structName,
+		structName,
+	)
+
+	formatted, err := format.Source([]byte(migrationTemplate))
+	if err != nil {
+		return "", err
+	}
+
+	return string(formatted), nil
+}
+
+func getSortedMigrationName(migrations map[string]Migration) []string {
+	keys := []string{}
+	for k := range migrations {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	return keys
 }
