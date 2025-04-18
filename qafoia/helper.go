@@ -12,15 +12,6 @@ import (
 	"golang.org/x/text/language"
 )
 
-func findExecutedMigration(baseName string, executedMigrations []ExecutedMigration) (*ExecutedMigration, bool) {
-	for _, executedMigration := range executedMigrations {
-		if executedMigration.Name == baseName {
-			return &executedMigration, true
-		}
-	}
-	return nil, false
-}
-
 func fileExists(fileName string) bool {
 	_, err := os.Stat(fileName)
 	return !os.IsNotExist(err)
