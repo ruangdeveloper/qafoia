@@ -1,3 +1,6 @@
+// Package qafoia provides tools for managing database migrations in Go projects.
+// It supports creating, applying, rolling back, and listing migrations using a
+// customizable driver interface.
 package qafoia
 
 import (
@@ -9,16 +12,8 @@ import (
 	"time"
 )
 
+// Qafoia is the main struct for managing and executing database migrations.
 type Qafoia struct {
-	// New(config *Config) (*Qafoia, error)
-	// Register(migrations ...Migration) error
-	// Create(name string) error
-	// Migrate(ctx context.Context) error
-	// Fresh(ctx context.Context) error
-	// Reset(ctx context.Context) error
-	// Rollback(ctx context.Context, step int) error
-	// Clean(ctx context.Context) error
-	// List(ctx context.Context) (RegisteredMigrationList, error)
 	driver            Driver
 	migrationFilesDir string
 	debugSql          bool
@@ -26,9 +21,9 @@ type Qafoia struct {
 	mu                sync.Mutex
 }
 
-// type Qafoia struct {
-// }
-
+// New creates a new instance of Qafoia using the provided configuration.
+// It validates and sets defaults for missing fields, checks for the migration
+// directory, and applies configuration to the driver.
 func New(config *Config) (*Qafoia, error) {
 	if config == nil {
 		return nil, ErrConfigNotProvided
@@ -37,7 +32,6 @@ func New(config *Config) (*Qafoia, error) {
 		return nil, ErrDriverNotProvided
 	}
 
-	// Set default values if not provided
 	if config.MigrationFilesDir == "" {
 		config.MigrationFilesDir = "migrations"
 	}
@@ -45,17 +39,14 @@ func New(config *Config) (*Qafoia, error) {
 		config.MigrationTableName = "migrations"
 	}
 
-	// Validate table name
 	if _, err := sanitizeTableName(config.MigrationTableName); err != nil {
 		return nil, fmt.Errorf("invalid migration table name: %w", err)
 	}
 
-	// Check if migration directory exists
 	if !migrationDirExists(config.MigrationFilesDir) {
 		return nil, fmt.Errorf("migration directory %q does not exist", config.MigrationFilesDir)
 	}
 
-	// Apply configuration
 	config.Driver.SetMigrationTableName(config.MigrationTableName)
 
 	return &Qafoia{
@@ -66,6 +57,8 @@ func New(config *Config) (*Qafoia, error) {
 	}, nil
 }
 
+// Register adds one or more Migration instances to the internal registry.
+// It ensures no duplicate migration names are registered.
 func (q *Qafoia) Register(migrations ...Migration) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -84,6 +77,8 @@ func (q *Qafoia) Register(migrations ...Migration) error {
 	return nil
 }
 
+// Create generates a new migration file using the given name.
+// The generated file includes a timestamp prefix and basic template content.
 func (q *Qafoia) Create(fileName string) error {
 	if fileName == "" {
 		return ErrMigrationNameNotProvided
@@ -115,6 +110,8 @@ func (q *Qafoia) Create(fileName string) error {
 	return nil
 }
 
+// Migrate applies all pending migrations in the correct order.
+// It skips migrations that have already been executed.
 func (q *Qafoia) Migrate(ctx context.Context) error {
 	if err := q.driver.CreateMigrationsTable(ctx); err != nil {
 		return err
@@ -148,25 +145,25 @@ func (q *Qafoia) Migrate(ctx context.Context) error {
 	return q.driver.ApplyMigrations(
 		ctx,
 		migrationsToApply,
-		func(migration *Migration) {
-			name := (*migration).Name()
-			log.Printf("📦 Migrating: %s\n", name)
+		func(m *Migration) {
+			log.Printf("📦 Migrating: %s\n", (*m).Name())
 			if q.debugSql {
 				log.Println("🧾 Running SQL:")
 				fmt.Println("================================================")
-				log.Println((*migration).UpScript())
+				fmt.Println((*m).UpScript())
 				fmt.Println("================================================")
 			}
 		},
-		func(migration *Migration) {
-			log.Printf("✅ Migrated: %s\n", (*migration).Name())
+		func(m *Migration) {
+			log.Printf("✅ Migrated: %s\n", (*m).Name())
 		},
-		func(migration *Migration, err error) {
-			log.Printf("❌ Migration failed: %s - %s\n", (*migration).Name(), err)
+		func(m *Migration, err error) {
+			log.Printf("❌ Migration failed: %s - %s\n", (*m).Name(), err)
 		},
 	)
 }
 
+// Fresh wipes the database clean and reapplies all registered migrations from scratch.
 func (q *Qafoia) Fresh(ctx context.Context) error {
 	log.Println("🧹 Cleaning database...")
 
@@ -184,6 +181,7 @@ func (q *Qafoia) Fresh(ctx context.Context) error {
 	return nil
 }
 
+// Reset rolls back all applied migrations and reapplies them from scratch.
 func (q *Qafoia) Reset(ctx context.Context) error {
 	executedMigrations, err := q.driver.GetExecutedMigrations(ctx, true)
 	if err != nil {
@@ -209,6 +207,7 @@ func (q *Qafoia) Reset(ctx context.Context) error {
 	return nil
 }
 
+// Rollback undoes the last `step` number of executed migrations.
 func (q *Qafoia) Rollback(ctx context.Context, step int) error {
 	if step <= 0 {
 		return ErrInvalidRollbackStep
@@ -228,7 +227,6 @@ func (q *Qafoia) Rollback(ctx context.Context, step int) error {
 		step = len(executedMigrations)
 	}
 
-	// 🔥 Build a map for faster lookup
 	migrationMap := make(map[string]Migration, len(q.migrations))
 	for _, m := range q.migrations {
 		migrationMap[m.Name()] = m
@@ -254,25 +252,25 @@ func (q *Qafoia) Rollback(ctx context.Context, step int) error {
 	return q.driver.UnapplyMigrations(
 		ctx,
 		migrationsToRollback,
-		func(migration *Migration) {
-			name := (*migration).Name()
-			log.Printf("🔄 Rolling back: %s\n", name)
+		func(m *Migration) {
+			log.Printf("🔄 Rolling back: %s\n", (*m).Name())
 			if q.debugSql {
 				log.Println("🧾 Running SQL:")
 				fmt.Println("================================================")
-				log.Println((*migration).DownScript())
+				fmt.Println((*m).DownScript())
 				fmt.Println("================================================")
 			}
 		},
-		func(migration *Migration) {
-			log.Printf("✅ Rolled back: %s\n", (*migration).Name())
+		func(m *Migration) {
+			log.Printf("✅ Rolled back: %s\n", (*m).Name())
 		},
-		func(migration *Migration, err error) {
-			log.Printf("❌ Rollback failed: %s - %s\n", (*migration).Name(), err)
+		func(m *Migration, err error) {
+			log.Printf("❌ Rollback failed: %s - %s\n", (*m).Name(), err)
 		},
 	)
 }
 
+// Clean drops all database tables and objects managed by the migration system.
 func (q *Qafoia) Clean(ctx context.Context) error {
 	log.Println("🧹 Cleaning database...")
 
@@ -284,6 +282,7 @@ func (q *Qafoia) Clean(ctx context.Context) error {
 	return nil
 }
 
+// List returns all registered migrations along with their execution status.
 func (q *Qafoia) List(ctx context.Context) (RegisteredMigrationList, error) {
 	if err := q.driver.CreateMigrationsTable(ctx); err != nil {
 		return nil, err

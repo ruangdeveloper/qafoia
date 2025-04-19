@@ -12,16 +12,19 @@ import (
 	"golang.org/x/text/language"
 )
 
+// fileExists checks if a file with the given name exists.
 func fileExists(fileName string) bool {
 	_, err := os.Stat(fileName)
 	return !os.IsNotExist(err)
 }
 
+// migrationDirExists checks if a directory for migration files exists.
 func migrationDirExists(migrationFilesDir string) bool {
 	_, err := os.Stat(migrationFilesDir)
 	return !os.IsNotExist(err)
 }
 
+// printTable prints a 2D slice of strings as a formatted table.
 func printTable(data [][]string) {
 	if len(data) == 0 {
 		fmt.Println("No data to display.")
@@ -62,12 +65,12 @@ func printTable(data [][]string) {
 		printRow(row)
 	}
 	printSeparator()
-
 }
 
+// sanitizeMigrationName transforms a migration name into a standardized format
+// and validates it. Returns an error if the name contains invalid characters.
 func sanitizeMigrationName(name string) (string, error) {
 	name = strings.ReplaceAll(name, "-", "_")
-	name = strings.ReplaceAll(name, " ", "_")
 	name = strings.ReplaceAll(name, " ", "_")
 	name = strings.ToLower(name)
 	name = strings.TrimSpace(name)
@@ -84,6 +87,8 @@ func sanitizeMigrationName(name string) (string, error) {
 	return name, nil
 }
 
+// sanitizeTableName validates the table name. Returns an error if it contains
+// invalid characters.
 func sanitizeTableName(name string) (string, error) {
 	valid := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 	if !valid.MatchString(name) {
@@ -93,33 +98,29 @@ func sanitizeTableName(name string) (string, error) {
 	return name, nil
 }
 
+// migrationNameToStructName converts a migration file name (with timestamp prefix)
+// to a Go struct name used in the migration template.
 func migrationNameToStructName(migrationName string) (string, error) {
-	// get the timestamp from prefix
 	re := regexp.MustCompile(`^\d{14}_`)
 	matches := re.FindStringSubmatch(migrationName)
 	if len(matches) == 0 {
 		return "", fmt.Errorf("invalid migration name: %s", migrationName)
 	}
 	timestamp := strings.TrimRight(matches[0], "_")
-	// remove the timestamp from the name
 	nameWithoutTimestamp := strings.TrimPrefix(migrationName, timestamp)
-	fmt.Println(timestamp)
-	fmt.Println(nameWithoutTimestamp)
 
-	// split the name by underscore
 	parts := strings.Split(nameWithoutTimestamp, "_")
-	// capitalize the first letter of each part
 	for i, part := range parts {
 		parts[i] = cases.Title(language.English).String(part)
 	}
-	// join the parts together
-	structName := fmt.Sprintf("M%s%s", timestamp, strings.Join(parts, ""))
 
+	structName := fmt.Sprintf("M%s%s", timestamp, strings.Join(parts, ""))
 	return structName, nil
 }
 
+// getPackageNameFromMigrationDir returns the last segment of the migrationFilesDir,
+// which is used as the package name.
 func getPackageNameFromMigrationDir(migrationFilesDir string) string {
-	// get the last part of the migrationFilesDir
 	parts := strings.Split(migrationFilesDir, "/")
 	if len(parts) == 0 {
 		return "migrations"
@@ -127,6 +128,8 @@ func getPackageNameFromMigrationDir(migrationFilesDir string) string {
 	return parts[len(parts)-1]
 }
 
+// migrationFileTemplate generates a Go file template for a new migration
+// using the specified package and migration name. It returns formatted Go source code.
 func migrationFileTemplate(packageName string, migrationName string) (string, error) {
 	structName, err := migrationNameToStructName(migrationName)
 	if err != nil {
@@ -166,6 +169,8 @@ func migrationFileTemplate(packageName string, migrationName string) (string, er
 	return string(formatted), nil
 }
 
+// getSortedMigrationName returns a sorted list of migration names
+// from a map of migration structs.
 func getSortedMigrationName(migrations map[string]Migration) []string {
 	keys := []string{}
 	for k := range migrations {
@@ -173,6 +178,5 @@ func getSortedMigrationName(migrations map[string]Migration) []string {
 	}
 
 	sort.Strings(keys)
-
 	return keys
 }

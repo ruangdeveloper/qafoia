@@ -1,3 +1,4 @@
+// Package qafoia provides a PostgreSQL migration driver for managing and applying SQL migrations.
 package qafoia
 
 import (
@@ -11,11 +12,14 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// PostgresDriver manages database connections and migration operations for PostgreSQL.
 type PostgresDriver struct {
 	db                 *sql.DB
 	migrationTableName string
 }
 
+// NewPostgresDriver creates and returns a new instance of PostgresDriver.
+// It opens a connection to the given PostgreSQL database using the provided credentials and schema.
 func NewPostgresDriver(
 	host string,
 	port string,
@@ -42,15 +46,16 @@ func NewPostgresDriver(
 	}, nil
 }
 
+// Close closes the database connection.
 func (p *PostgresDriver) Close() error {
 	if p.db != nil {
-		if err := p.db.Close(); err != nil {
-			return err
-		}
+		return p.db.Close()
 	}
 	return nil
 }
 
+// SetMigrationTableName sets the name of the table used to track executed migrations.
+// If the provided name is empty, the default "migrations" is used.
 func (p *PostgresDriver) SetMigrationTableName(name string) {
 	if name == "" {
 		name = "migrations"
@@ -58,6 +63,7 @@ func (p *PostgresDriver) SetMigrationTableName(name string) {
 	p.migrationTableName = name
 }
 
+// CreateMigrationsTable creates the migration tracking table if it does not exist.
 func (p *PostgresDriver) CreateMigrationsTable(ctx context.Context) error {
 	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
@@ -66,13 +72,11 @@ func (p *PostgresDriver) CreateMigrationsTable(ctx context.Context) error {
 		);
 	`, p.migrationTableName)
 	_, err := p.db.ExecContext(ctx, query)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
+// GetExecutedMigrations returns a list of executed migrations from the tracking table.
+// If reverse is true, the list is ordered descending by name.
 func (p *PostgresDriver) GetExecutedMigrations(ctx context.Context, reverse bool) ([]ExecutedMigration, error) {
 	order := "ASC"
 	if reverse {
@@ -107,6 +111,7 @@ func (p *PostgresDriver) GetExecutedMigrations(ctx context.Context, reverse bool
 	return migrations, nil
 }
 
+// CleanDatabase drops all tables in the "public" schema.
 func (p *PostgresDriver) CleanDatabase(ctx context.Context) error {
 	rows, err := p.db.QueryContext(ctx, `
 		SELECT tablename
@@ -141,6 +146,8 @@ func (p *PostgresDriver) CleanDatabase(ctx context.Context) error {
 	return nil
 }
 
+// ApplyMigrations runs the "up" SQL scripts for the given migrations.
+// Optional callbacks can be provided to track the progress of each migration.
 func (p *PostgresDriver) ApplyMigrations(
 	ctx context.Context,
 	migrations []Migration,
@@ -177,6 +184,8 @@ func (p *PostgresDriver) ApplyMigrations(
 	return nil
 }
 
+// UnapplyMigrations runs the "down" SQL scripts for the given migrations in reverse order.
+// Optional callbacks can be provided to track the progress of each migration.
 func (p *PostgresDriver) UnapplyMigrations(
 	ctx context.Context,
 	migrations []Migration,
@@ -213,35 +222,26 @@ func (p *PostgresDriver) UnapplyMigrations(
 	return nil
 }
 
+// executeMigrationSQL runs a given SQL script as part of a migration.
 func (p *PostgresDriver) executeMigrationSQL(ctx context.Context, sql string) error {
 	if sql == "" {
 		return nil
 	}
 
 	_, err := p.db.ExecContext(ctx, sql)
-
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
+// insertExecutedMigration records the given migration name and execution time in the tracking table.
 func (p *PostgresDriver) insertExecutedMigration(ctx context.Context, name string, executedAt time.Time) error {
 	query := fmt.Sprintf(`INSERT INTO %s (name, executed_at) VALUES ($1, $2)`, p.migrationTableName)
 	_, err := p.db.ExecContext(ctx, query, name, executedAt)
-
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
+// removeExecutedMigration deletes the record of the given migration from the tracking table.
 func (p *PostgresDriver) removeExecutedMigration(ctx context.Context, name string) error {
 	query := fmt.Sprintf(`DELETE FROM %s WHERE name = $1`, p.migrationTableName)
 	_, err := p.db.ExecContext(ctx, query, name)
-
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
