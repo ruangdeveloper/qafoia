@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -166,7 +165,6 @@ func (m *MySqlDriver) CleanDatabase(ctx context.Context) error {
 		return fmt.Errorf("failed to re-enable FK checks: %w", err)
 	}
 
-	log.Println("all tables dropped successfully")
 	return nil
 }
 

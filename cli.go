@@ -50,13 +50,33 @@ func (c *Cli) Execute(ctx context.Context) error {
 		Use:   "migrate",
 		Short: "Run all pending migrations",
 		Run: func(cmd *cobra.Command, args []string) {
-			err := c.qafoia.Migrate(ctx)
-			if err != nil {
-				log.Println("Error running migrations:", err)
-				return
+			fresh := false
+			var err error
+			freshFlag := cmd.Flags().Lookup("fresh")
+			if freshFlag != nil && freshFlag.Changed {
+				fresh, err = strconv.ParseBool(freshFlag.Value.String())
+				if err != nil {
+					log.Println("Invalid fresh flag:", err)
+					return
+				}
+			}
+			if fresh {
+				err = c.qafoia.Fresh(ctx)
+				if err != nil {
+					log.Println("Error running fresh migrations:", err)
+					return
+				}
+			} else {
+				err = c.qafoia.Migrate(ctx)
+				if err != nil {
+					log.Println("Error running migrations:", err)
+					return
+				}
 			}
 		},
 	}
+
+	migrateCmd.Flags().BoolP("fresh", "f", false, "Run fresh migrations")
 
 	var rollbackCmd = &cobra.Command{
 		Use:   "rollback",
@@ -87,18 +107,6 @@ func (c *Cli) Execute(ctx context.Context) error {
 	}
 
 	rollbackCmd.Flags().IntP("step", "s", 1, "Number of migrations to rollback")
-
-	var freshCmd = &cobra.Command{
-		Use:   "fresh",
-		Short: "Drop all tables and re-run all migrations",
-		Run: func(cmd *cobra.Command, args []string) {
-			err := c.qafoia.Fresh(ctx)
-			if err != nil {
-				log.Println("Error running fresh migrations:", err)
-				return
-			}
-		},
-	}
 
 	var resetCmd = &cobra.Command{
 		Use:   "reset",
@@ -139,6 +147,10 @@ func (c *Cli) Execute(ctx context.Context) error {
 
 	var rootCmd = &cobra.Command{
 		Use: c.cliName,
+		CompletionOptions: cobra.CompletionOptions{
+			HiddenDefaultCmd: true,
+		},
+		Short: "Qafoia CLI",
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()
 		},
@@ -148,7 +160,6 @@ func (c *Cli) Execute(ctx context.Context) error {
 		listCmd,
 		migrateCmd,
 		rollbackCmd,
-		freshCmd,
 		resetCmd,
 		cleanCmd,
 		createCmd,

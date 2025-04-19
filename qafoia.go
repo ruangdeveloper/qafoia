@@ -152,7 +152,10 @@ func (q *Qafoia) Migrate(ctx context.Context) error {
 			name := (*migration).Name()
 			log.Printf("📦 Migrating: %s\n", name)
 			if q.debugSql {
-				log.Printf("🧾 Running SQL:\n%s\n", (*migration).UpScript())
+				log.Println("🧾 Running SQL:")
+				fmt.Println("================================================")
+				log.Println((*migration).UpScript())
+				fmt.Println("================================================")
 			}
 		},
 		func(migration *Migration) {
@@ -255,7 +258,10 @@ func (q *Qafoia) Rollback(ctx context.Context, step int) error {
 			name := (*migration).Name()
 			log.Printf("🔄 Rolling back: %s\n", name)
 			if q.debugSql {
-				log.Printf("🧾 Running SQL:\n%s\n", (*migration).DownScript())
+				log.Println("🧾 Running SQL:")
+				fmt.Println("================================================")
+				log.Println((*migration).DownScript())
+				fmt.Println("================================================")
 			}
 		},
 		func(migration *Migration) {
