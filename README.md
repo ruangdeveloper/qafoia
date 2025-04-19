@@ -146,7 +146,7 @@ d, err := qafoia.NewPostgresDriver(
 
 ## 📦 Generated Migration File Example
 
-When you run `q.Create("add_users_table")`, a file like this will be created:
+When you run `q.Create("create_users_table")`, a file like this will be created:
 
 ```go
 package migrations
@@ -170,9 +170,6 @@ func (m *M20250418220011CreateUsersTable) DownScript() string {
 }
 
 ```
-
-Here's how you can add the CLI helper section to your README:
-
 
 ## 🧑‍💻 CLI Helper
 
