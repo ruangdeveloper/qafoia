@@ -9,19 +9,16 @@ import (
 	"time"
 )
 
-type Qafoia interface {
-	New(config *Config) (*Qafoia, error)
-	Register(migrations ...Migration) error
-	Create(name string) error
-	Migrate(ctx context.Context) error
-	Fresh(ctx context.Context) error
-	Reset(ctx context.Context) error
-	Rollback(ctx context.Context, step int) error
-	Clean(ctx context.Context) error
-	List(ctx context.Context) (RegisteredMigrationList, error)
-}
-
-type qafoiaImplementation struct {
+type Qafoia struct {
+	// New(config *Config) (*Qafoia, error)
+	// Register(migrations ...Migration) error
+	// Create(name string) error
+	// Migrate(ctx context.Context) error
+	// Fresh(ctx context.Context) error
+	// Reset(ctx context.Context) error
+	// Rollback(ctx context.Context, step int) error
+	// Clean(ctx context.Context) error
+	// List(ctx context.Context) (RegisteredMigrationList, error)
 	driver            Driver
 	migrationFilesDir string
 	debugSql          bool
@@ -29,7 +26,10 @@ type qafoiaImplementation struct {
 	mu                sync.Mutex
 }
 
-func New(config *Config) (*qafoiaImplementation, error) {
+// type Qafoia struct {
+// }
+
+func New(config *Config) (*Qafoia, error) {
 	if config == nil {
 		return nil, ErrConfigNotProvided
 	}
@@ -58,7 +58,7 @@ func New(config *Config) (*qafoiaImplementation, error) {
 	// Apply configuration
 	config.Driver.SetMigrationTableName(config.MigrationTableName)
 
-	return &qafoiaImplementation{
+	return &Qafoia{
 		driver:            config.Driver,
 		migrationFilesDir: config.MigrationFilesDir,
 		debugSql:          config.DebugSql,
@@ -66,7 +66,7 @@ func New(config *Config) (*qafoiaImplementation, error) {
 	}, nil
 }
 
-func (q *qafoiaImplementation) Register(migrations ...Migration) error {
+func (q *Qafoia) Register(migrations ...Migration) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -84,7 +84,7 @@ func (q *qafoiaImplementation) Register(migrations ...Migration) error {
 	return nil
 }
 
-func (q *qafoiaImplementation) Create(fileName string) error {
+func (q *Qafoia) Create(fileName string) error {
 	if fileName == "" {
 		return ErrMigrationNameNotProvided
 	}
@@ -115,7 +115,7 @@ func (q *qafoiaImplementation) Create(fileName string) error {
 	return nil
 }
 
-func (q *qafoiaImplementation) Migrate(ctx context.Context) error {
+func (q *Qafoia) Migrate(ctx context.Context) error {
 	if err := q.driver.CreateMigrationsTable(ctx); err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ func (q *qafoiaImplementation) Migrate(ctx context.Context) error {
 	)
 }
 
-func (q *qafoiaImplementation) Fresh(ctx context.Context) error {
+func (q *Qafoia) Fresh(ctx context.Context) error {
 	log.Println("🧹 Cleaning database...")
 
 	if err := q.driver.CleanDatabase(ctx); err != nil {
@@ -181,7 +181,7 @@ func (q *qafoiaImplementation) Fresh(ctx context.Context) error {
 	return nil
 }
 
-func (q *qafoiaImplementation) Reset(ctx context.Context) error {
+func (q *Qafoia) Reset(ctx context.Context) error {
 	executedMigrations, err := q.driver.GetExecutedMigrations(ctx, true)
 	if err != nil {
 		return fmt.Errorf("failed to get executed migrations: %w", err)
@@ -206,7 +206,7 @@ func (q *qafoiaImplementation) Reset(ctx context.Context) error {
 	return nil
 }
 
-func (q *qafoiaImplementation) Rollback(ctx context.Context, step int) error {
+func (q *Qafoia) Rollback(ctx context.Context, step int) error {
 	if step <= 0 {
 		return ErrInvalidRollbackStep
 	}
@@ -267,7 +267,7 @@ func (q *qafoiaImplementation) Rollback(ctx context.Context, step int) error {
 	)
 }
 
-func (q *qafoiaImplementation) Clean(ctx context.Context) error {
+func (q *Qafoia) Clean(ctx context.Context) error {
 	log.Println("🧹 Cleaning database...")
 
 	if err := q.driver.CleanDatabase(ctx); err != nil {
@@ -278,7 +278,7 @@ func (q *qafoiaImplementation) Clean(ctx context.Context) error {
 	return nil
 }
 
-func (q *qafoiaImplementation) List(ctx context.Context) (RegisteredMigrationList, error) {
+func (q *Qafoia) List(ctx context.Context) (RegisteredMigrationList, error) {
 	if err := q.driver.CreateMigrationsTable(ctx); err != nil {
 		return nil, err
 	}

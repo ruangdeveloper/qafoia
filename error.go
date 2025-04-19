@@ -12,4 +12,5 @@ var (
 	ErrMigrationFileNotFound      = errors.New("migration file not found")
 	ErrInvalidRollbackStep        = errors.New("invalid rollback step")
 	ErrEmbeddedFSNotProvided      = errors.New("embedded fs not provided")
+	ErrQafoiaNotProvided          = errors.New("qafoia instance not provided")
 )
