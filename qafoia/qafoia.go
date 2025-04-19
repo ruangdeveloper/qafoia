@@ -67,7 +67,6 @@ func New(config *Config) (*qafoiaImplementation, error) {
 }
 
 func (q *qafoiaImplementation) Register(migrations ...Migration) error {
-
 	q.mu.Lock()
 	defer q.mu.Unlock()
 

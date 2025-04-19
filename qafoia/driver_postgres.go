@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -63,7 +65,6 @@ func (p *PostgresDriver) CreateMigrationsTable(ctx context.Context) error {
 			executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
 	`, p.migrationTableName)
-
 	_, err := p.db.ExecContext(ctx, query)
 	if err != nil {
 		return err
@@ -77,11 +78,7 @@ func (p *PostgresDriver) GetExecutedMigrations(ctx context.Context, reverse bool
 	if reverse {
 		order = "DESC"
 	}
-	query := fmt.Sprintf(`
-		SELECT name, executed_at
-		FROM %s
-		ORDER BY name %s;
-	`, p.migrationTableName, order)
+	query := fmt.Sprintf(`SELECT name, executed_at FROM %s ORDER BY name %s;`, p.migrationTableName, order)
 
 	rows, err := p.db.QueryContext(ctx, query)
 	if err != nil {
@@ -92,11 +89,19 @@ func (p *PostgresDriver) GetExecutedMigrations(ctx context.Context, reverse bool
 	var migrations []ExecutedMigration
 
 	for rows.Next() {
-		var migration ExecutedMigration
-		if err := rows.Scan(&migration.Name, &migration.ExecutedAt); err != nil {
+		var name string
+		var executedAt time.Time
+		if err := rows.Scan(&name, &executedAt); err != nil {
 			return nil, err
 		}
-		migrations = append(migrations, migration)
+		migrations = append(migrations, ExecutedMigration{
+			Name:       name,
+			ExecutedAt: executedAt,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return migrations, nil
@@ -104,96 +109,116 @@ func (p *PostgresDriver) GetExecutedMigrations(ctx context.Context, reverse bool
 
 func (p *PostgresDriver) CleanDatabase(ctx context.Context) error {
 	rows, err := p.db.QueryContext(ctx, `
-		SELECT tablename 
-		FROM pg_tables 
+		SELECT tablename
+		FROM pg_tables
 		WHERE schemaname = 'public';
 	`)
 	if err != nil {
-		return err
+		return fmt.Errorf("query table names: %w", err)
 	}
 	defer rows.Close()
 
+	var tables []string
 	for rows.Next() {
 		var table string
 		if err := rows.Scan(&table); err != nil {
-			return err
+			return fmt.Errorf("scan table name: %w", err)
 		}
-
-		_, err := p.db.ExecContext(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS "%s" CASCADE;`, table))
-		if err != nil {
-			return fmt.Errorf("failed to drop table %s: %w", table, err)
-		}
+		tables = append(tables, fmt.Sprintf(`"%s"`, table)) // safely quote identifiers
 	}
 
+	if len(tables) == 0 {
+		log.Println("no tables to drop")
+		return nil
+	}
+
+	query := fmt.Sprintf(`DROP TABLE IF EXISTS %s CASCADE;`, strings.Join(tables, ", "))
+	if _, err := p.db.ExecContext(ctx, query); err != nil {
+		return fmt.Errorf("drop tables: %w", err)
+	}
+
+	log.Println("all public tables dropped")
 	return nil
 }
 
 func (p *PostgresDriver) ApplyMigrations(
 	ctx context.Context,
-	migrations MigrationFiles,
-	onRunning func(migration *MigrationFile),
-	onSuccess func(migration *MigrationFile),
-	onFailed func(migration *MigrationFile, err error),
+	migrations []Migration,
+	onRunning func(migration *Migration),
+	onSuccess func(migration *Migration),
+	onFailed func(migration *Migration, err error),
 ) error {
-	for _, migration := range migrations {
+	for i := range migrations {
+		m := migrations[i]
+
 		if onRunning != nil {
-			onRunning(&migration)
+			onRunning(&m)
 		}
-		err := p.executeMigrationSQL(ctx, migration.UpSql)
-		if err != nil {
+
+		if err := p.executeMigrationSQL(ctx, m.UpScript()); err != nil {
 			if onFailed != nil {
-				onFailed(&migration, err)
+				onFailed(&m, err)
 			}
-			return err
+			return fmt.Errorf("failed to apply migration %s: %w", m.Name(), err)
 		}
-		err = p.insertExecutedMigration(ctx, migration.BaseName, time.Now())
-		if err != nil {
+
+		if err := p.insertExecutedMigration(ctx, m.Name(), time.Now()); err != nil {
 			if onFailed != nil {
-				onFailed(&migration, err)
+				onFailed(&m, err)
 			}
-			return err
+			return fmt.Errorf("failed to record migration %s: %w", m.Name(), err)
 		}
+
 		if onSuccess != nil {
-			onSuccess(&migration)
+			onSuccess(&m)
 		}
 	}
+
 	return nil
 }
 
 func (p *PostgresDriver) UnapplyMigrations(
 	ctx context.Context,
-	migrations MigrationFiles,
-	onRunning func(migration *MigrationFile),
-	onSuccess func(migration *MigrationFile),
-	onFailed func(migration *MigrationFile, err error),
+	migrations []Migration,
+	onRunning func(migration *Migration),
+	onSuccess func(migration *Migration),
+	onFailed func(migration *Migration, err error),
 ) error {
-	for _, migration := range migrations {
+	for i := range migrations {
+		mig := migrations[i]
+
 		if onRunning != nil {
-			onRunning(&migration)
+			onRunning(&mig)
 		}
-		err := p.executeMigrationSQL(ctx, migration.DownSql)
-		if err != nil {
+
+		if err := p.executeMigrationSQL(ctx, mig.DownScript()); err != nil {
 			if onFailed != nil {
-				onFailed(&migration, err)
+				onFailed(&mig, err)
 			}
-			return err
+			return fmt.Errorf("failed to unapply migration %s: %w", mig.Name(), err)
 		}
-		err = p.removeExecutedMigration(ctx, migration.BaseName)
-		if err != nil {
+
+		if err := p.removeExecutedMigration(ctx, mig.Name()); err != nil {
 			if onFailed != nil {
-				onFailed(&migration, err)
+				onFailed(&mig, err)
 			}
-			return err
+			return fmt.Errorf("failed to remove migration record %s: %w", mig.Name(), err)
 		}
+
 		if onSuccess != nil {
-			onSuccess(&migration)
+			onSuccess(&mig)
 		}
 	}
+
 	return nil
 }
 
-func (p *PostgresDriver) executeMigrationSQL(ctx context.Context, sqlBytes []byte, args ...any) error {
-	_, err := p.db.ExecContext(ctx, string(sqlBytes), args...)
+func (p *PostgresDriver) executeMigrationSQL(ctx context.Context, sql string) error {
+	if sql == "" {
+		return nil
+	}
+
+	_, err := p.db.ExecContext(ctx, sql)
 
 	if err != nil {
 		return err

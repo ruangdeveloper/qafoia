@@ -170,67 +170,84 @@ func (m *MySqlDriver) CleanDatabase(ctx context.Context) error {
 	return nil
 }
 
-func (m *MySqlDriver) ApplyMigrations(ctx context.Context, migrations []Migration, onRunning func(migration *Migration), onSuccess func(migration *Migration), onFailed func(migration *Migration, err error)) error {
-	for _, migration := range migrations {
+func (m *MySqlDriver) ApplyMigrations(
+	ctx context.Context,
+	migrations []Migration,
+	onRunning func(migration *Migration),
+	onSuccess func(migration *Migration),
+	onFailed func(migration *Migration, err error),
+) error {
+	for i := range migrations {
+		mig := migrations[i]
+
 		if onRunning != nil {
-			onRunning(&migration)
+			onRunning(&mig)
 		}
-		err := m.executeMigrationSQL(ctx, []byte(migration.UpScript()))
-		if err != nil {
+
+		if err := m.executeMigrationSQL(ctx, mig.UpScript()); err != nil {
 			if onFailed != nil {
-				onFailed(&migration, err)
+				onFailed(&mig, err)
 			}
-			return err
+			return fmt.Errorf("failed to apply migration %s: %w", mig.Name(), err)
 		}
-		err = m.insertExecutedMigration(ctx, migration.Name(), time.Now())
-		if err != nil {
+
+		if err := m.insertExecutedMigration(ctx, mig.Name(), time.Now()); err != nil {
 			if onFailed != nil {
-				onFailed(&migration, err)
+				onFailed(&mig, err)
 			}
-			return err
+			return fmt.Errorf("failed to record migration %s: %w", mig.Name(), err)
 		}
+
 		if onSuccess != nil {
-			onSuccess(&migration)
+			onSuccess(&mig)
 		}
 	}
 
 	return nil
 }
 
-func (m *MySqlDriver) UnapplyMigrations(ctx context.Context, migrations []Migration, onRunning func(migration *Migration), onSuccess func(migration *Migration), onFailed func(migration *Migration, err error)) error {
-	for _, migration := range migrations {
+func (m *MySqlDriver) UnapplyMigrations(
+	ctx context.Context,
+	migrations []Migration,
+	onRunning func(migration *Migration),
+	onSuccess func(migration *Migration),
+	onFailed func(migration *Migration, err error),
+) error {
+	for i := range migrations {
+		mig := migrations[i]
+
 		if onRunning != nil {
-			onRunning(&migration)
+			onRunning(&mig)
 		}
-		err := m.executeMigrationSQL(ctx, []byte(migration.DownScript()))
-		if err != nil {
+
+		if err := m.executeMigrationSQL(ctx, mig.DownScript()); err != nil {
 			if onFailed != nil {
-				onFailed(&migration, err)
+				onFailed(&mig, err)
 			}
-			return err
+			return fmt.Errorf("failed to unapply migration %s: %w", mig.Name(), err)
 		}
-		err = m.removeExecutedMigration(ctx, migration.Name())
-		if err != nil {
+
+		if err := m.removeExecutedMigration(ctx, mig.Name()); err != nil {
 			if onFailed != nil {
-				onFailed(&migration, err)
+				onFailed(&mig, err)
 			}
-			return err
+			return fmt.Errorf("failed to remove migration record %s: %w", mig.Name(), err)
 		}
+
 		if onSuccess != nil {
-			onSuccess(&migration)
+			onSuccess(&mig)
 		}
 	}
+
 	return nil
 }
 
-func (m *MySqlDriver) executeMigrationSQL(ctx context.Context, sqlBytes []byte) error {
-	sql := string(sqlBytes)
-
+func (m *MySqlDriver) executeMigrationSQL(ctx context.Context, sql string) error {
 	if sql == "" {
 		return nil
 	}
 
-	_, err := m.db.ExecContext(ctx, string(sqlBytes))
+	_, err := m.db.ExecContext(ctx, sql)
 
 	if err != nil {
 		return err
