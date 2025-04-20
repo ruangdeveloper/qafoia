@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type CliConfg struct {
+type CliConfig struct {
 	Qafoia  *Qafoia
 	CliName string
 }
@@ -18,7 +18,7 @@ type Cli struct {
 	cliName string
 }
 
-func NewCli(config CliConfg) (*Cli, error) {
+func NewCli(config CliConfig) (*Cli, error) {
 	if config.Qafoia == nil {
 		return nil, ErrQafoiaNotProvided
 	}
