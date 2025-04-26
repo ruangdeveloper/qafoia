@@ -142,14 +142,17 @@ func migrationFileTemplate(packageName string, migrationName string) (string, er
 		type %s struct {}
 
 		func (m *%s) Name() string {
+		    // Don't change this name
 			return "%s"
 		}
 
 		func (m *%s) UpScript() string {
+		    // Write your migration SQL here
 			return ""
 		}
 
 		func (m *%s) DownScript() string {
+			// Write your rollback SQL here
 			return ""
 		}
 	`,

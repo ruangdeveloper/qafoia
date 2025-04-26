@@ -293,9 +293,19 @@ func (q *Qafoia) List(ctx context.Context) (RegisteredMigrationList, error) {
 		return nil, err
 	}
 
-	executedMap := make(map[string]bool, len(executedMigrations))
+	executedMap := make(map[string]struct {
+		Executed   bool
+		ExecutedAt *time.Time
+	}, len(executedMigrations))
+
 	for _, m := range executedMigrations {
-		executedMap[m.Name] = true
+		executedMap[m.Name] = struct {
+			Executed   bool
+			ExecutedAt *time.Time
+		}{
+			Executed:   true,
+			ExecutedAt: &m.ExecutedAt,
+		}
 	}
 
 	registeredMigrations := make(RegisteredMigrationList, 0, len(q.migrations))
@@ -303,12 +313,14 @@ func (q *Qafoia) List(ctx context.Context) (RegisteredMigrationList, error) {
 	for _, k := range getSortedMigrationName(q.migrations) {
 		migration := q.migrations[k]
 		name := migration.Name()
+		executed := executedMap[name]
 
 		registeredMigrations = append(registeredMigrations, RegisteredMigration{
 			Name:       name,
 			UpScript:   migration.UpScript(),
 			DownScript: migration.DownScript(),
-			IsExecuted: executedMap[name],
+			IsExecuted: executed.Executed,
+			ExecutedAt: executed.ExecutedAt,
 		})
 	}
 

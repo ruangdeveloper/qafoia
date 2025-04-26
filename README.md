@@ -44,9 +44,11 @@ if err != nil {
 ```go
 q.Register(
     migration1, // Must implement qafoia.Migration
-    migration2,
+    // Example
+    &migrations.M20250418220011CreateUsersTable{},
 )
 ```
+
 Migration struct is created automatically when creating migration file.
 
 ### 3. Apply Migrations
@@ -154,19 +156,18 @@ package migrations
 type M20250418220011CreateUsersTable struct{}
 
 func (m *M20250418220011CreateUsersTable) Name() string {
+  // Don't change this name
 	return "20250418220011_create_users_table"
 }
 
 func (m *M20250418220011CreateUsersTable) UpScript() string {
-	return `
-        -- write sql script here
-    `
+  // Write your migration SQL here
+	return ""
 }
 
 func (m *M20250418220011CreateUsersTable) DownScript() string {
-	return `
-        -- write sql script for revert the changes here
-    `
+  // Write your rollback SQL here
+	return ""
 }
 
 ```
@@ -238,6 +239,7 @@ After setting up the CLI, you can run the following commands directly from the t
 These commands are built into the CLI, making it easy to perform common migration tasks without having to write custom code each time.
 
 ### Full Example
+
 ```go
 package main
 
@@ -274,8 +276,8 @@ func main() {
 	}
 
 	err = q.Register(
-		&mysql.M20250418220011CreateUsersTable{},
-		&mysql.M20250418233018CreateRolesTable{},
+		&migrations.M20250418220011CreateUsersTable{},
+		&migrations.M20250418233018CreateRolesTable{},
 	)
 
 	if err != nil {
