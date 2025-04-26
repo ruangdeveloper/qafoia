@@ -10,13 +10,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func setupMockDBMySql(t *testing.T) (*sql.DB, sqlmock.Sqlmock, *MySqlDriver) {
+func setupMockDBPostgres(t *testing.T) (*sql.DB, sqlmock.Sqlmock, *PostgresDriver) {
 	db, mock, err := sqlmock.New(
 		sqlmock.MonitorPingsOption(true),
 	)
 	assert.NoError(t, err)
 
-	driver := &MySqlDriver{
+	driver := &PostgresDriver{
 		db:                 db,
 		migrationTableName: "migrations",
 	}
@@ -24,9 +24,9 @@ func setupMockDBMySql(t *testing.T) (*sql.DB, sqlmock.Sqlmock, *MySqlDriver) {
 	return db, mock, driver
 }
 
-func TestNewMySqlDriver(t *testing.T) {
+func TestNewPostgresDriver(t *testing.T) {
 	// Create a mock database connection
-	db, mock, driver := setupMockDBMySql(t)
+	db, mock, driver := setupMockDBPostgres(t)
 	defer db.Close()
 
 	// Simulate a successful ping to the DB
@@ -36,90 +36,70 @@ func TestNewMySqlDriver(t *testing.T) {
 	assert.NotNil(t, driver)
 }
 
-func TestCreateMigrationsTableMySqlDriver(t *testing.T) {
-	// Create a mock database connection
-	db, mock, driver := setupMockDBMySql(t)
+func TestCreateMigrationsTablePostgresDriver(t *testing.T) {
+	db, mock, driver := setupMockDBPostgres(t)
 	defer db.Close()
 
-	// Simulate a successful table creation
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS migrations").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS migrations`).WillReturnResult(sqlmock.NewResult(1, 1))
 
-	// Call CreateMigrationsTable
 	err := driver.CreateMigrationsTable(context.Background())
 	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestSetMigrationTableNameMySqlDriver(t *testing.T) {
-	driver := &MySqlDriver{}
+func TestSetMigrationTableNamePostgresDriver(t *testing.T) {
+	driver := &PostgresDriver{}
 
-	// Test default migration table name
 	driver.SetMigrationTableName("")
 	assert.Equal(t, "migrations", driver.migrationTableName)
 
-	// Test custom migration table name
 	driver.SetMigrationTableName("custom_migrations")
 	assert.Equal(t, "custom_migrations", driver.migrationTableName)
 }
 
-func TestGetExecutedMigrations(t *testing.T) {
-	// Create a mock database connection
-	db, mock, driver := setupMockDBMySql(t)
+func TestGetExecutedMigrationsPostgresDriver(t *testing.T) {
+	db, mock, driver := setupMockDBPostgres(t)
 	defer db.Close()
 
-	// Simulate the query to fetch migrations
 	rows := sqlmock.NewRows([]string{"name", "executed_at"}).
 		AddRow("migration_1", time.Now()).
 		AddRow("migration_2", time.Now())
 
-	mock.ExpectQuery("SELECT name, executed_at FROM migrations").
+	mock.ExpectQuery(`SELECT name, executed_at FROM migrations ORDER BY name ASC;`).
 		WillReturnRows(rows)
 
-	// Call GetExecutedMigrations
 	migrations, err := driver.GetExecutedMigrations(context.Background(), false)
 	assert.NoError(t, err)
 	assert.Len(t, migrations, 2)
-	assert.Equal(t, "migration_1", migrations[0].Name)
+	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestCleanDatabaseMySqlDriver(t *testing.T) {
-	db, mock, driver := setupMockDBMySql(t)
+func TestCleanDatabasePostgresDriver(t *testing.T) {
+	db, mock, driver := setupMockDBPostgres(t)
 	defer db.Close()
 
-	ctx := context.Background()
+	// Mock finding tables
+	tableRows := sqlmock.NewRows([]string{"tablename"}).
+		AddRow("table1").
+		AddRow("table2")
 
-	// 1. Expect disabling foreign key checks
-	mock.ExpectExec(`SET FOREIGN_KEY_CHECKS = 0;`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT tablename FROM pg_tables WHERE schemaname = 'public';`).
+		WillReturnRows(tableRows)
 
-	// 2. Expect selecting all table names
-	mock.ExpectQuery(`SELECT table_name FROM information_schema\.tables WHERE table_schema = DATABASE\(\);`).
-		WillReturnRows(
-			sqlmock.NewRows([]string{"table_name"}).
-				AddRow("users").
-				AddRow("products"),
-		)
+	// Mock dropping tables
+	mock.ExpectExec(`DROP TABLE IF EXISTS "table1", "table2" CASCADE;`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	// 3. Expect dropping tables
-	mock.ExpectExec(`DROP TABLE ` + "`users`, `products`;").WillReturnResult(sqlmock.NewResult(0, 0))
-
-	// 4. Expect re-enabling foreign key checks
-	mock.ExpectExec(`SET FOREIGN_KEY_CHECKS = 1;`).WillReturnResult(sqlmock.NewResult(0, 0))
-
-	// Act
-	err := driver.CleanDatabase(ctx)
-
+	err := driver.CleanDatabase(context.Background())
 	assert.NoError(t, err)
-
-	// Assert all expectations were met
-	err = mock.ExpectationsWereMet()
-
-	assert.NoError(t, err, "there were unfulfilled expectations")
+	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestApplyMigrationsMySqlDriver(t *testing.T) {
-	db, mock, driver := setupMockDBMySql(t)
+func TestApplyMigrationsPostgresDriver(t *testing.T) {
+	db, mock, driver := setupMockDBPostgres(t)
 	defer db.Close()
 
-	mig := &mockMigrationMySqlDriver{
+	mig := &mockMigrationPostgresDriver{
 		name: "migration1",
 		up:   "CREATE TABLE test (id INT);",
 		down: "DROP TABLE test;",
@@ -134,18 +114,18 @@ func TestApplyMigrationsMySqlDriver(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestUnapplyMigrationsMySqlDriver(t *testing.T) {
-	db, mock, driver := setupMockDBMySql(t)
+func TestUnapplyMigrationsPostgresDriver(t *testing.T) {
+	db, mock, driver := setupMockDBPostgres(t)
 	defer db.Close()
 
-	mig := &mockMigrationMySqlDriver{
+	mig := &mockMigrationPostgresDriver{
 		name: "migration1",
 		up:   "CREATE TABLE test (id INT);",
 		down: "DROP TABLE test;",
 	}
 
 	mock.ExpectExec(mig.down).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`DELETE FROM migrations WHERE name = ?`).WithArgs(mig.name).
+	mock.ExpectExec(`DELETE FROM migrations WHERE name = \$1`).WithArgs(mig.name).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := driver.UnapplyMigrations(context.Background(), []Migration{mig}, nil, nil, nil)
@@ -153,8 +133,8 @@ func TestUnapplyMigrationsMySqlDriver(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestExecuteMigrationSQLMySqlDriver(t *testing.T) {
-	db, mock, driver := setupMockDBMySql(t)
+func TestExecuteMigrationSQLPostgresDriver(t *testing.T) {
+	db, mock, driver := setupMockDBPostgres(t)
 	defer db.Close()
 
 	mock.ExpectExec(`SOME SQL STATEMENT`).WillReturnResult(sqlmock.NewResult(0, 0))
@@ -164,8 +144,8 @@ func TestExecuteMigrationSQLMySqlDriver(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestInsertExecutedMigrationMySqlDriver(t *testing.T) {
-	db, mock, driver := setupMockDBMySql(t)
+func TestInsertExecutedMigrationPostgresDriver(t *testing.T) {
+	db, mock, driver := setupMockDBPostgres(t)
 	defer db.Close()
 
 	mock.ExpectExec(`INSERT INTO migrations`).WithArgs("migration_name", sqlmock.AnyArg()).
@@ -176,11 +156,11 @@ func TestInsertExecutedMigrationMySqlDriver(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestRemoveExecutedMigrationMySqlDriver(t *testing.T) {
-	db, mock, driver := setupMockDBMySql(t)
+func TestRemoveExecutedMigrationPostgresDriver(t *testing.T) {
+	db, mock, driver := setupMockDBPostgres(t)
 	defer db.Close()
 
-	mock.ExpectExec(`DELETE FROM migrations WHERE name = ?`).WithArgs("migration_name").
+	mock.ExpectExec(`DELETE FROM migrations WHERE name = \$1`).WithArgs("migration_name").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := driver.removeExecutedMigration(context.Background(), "migration_name")
@@ -190,12 +170,12 @@ func TestRemoveExecutedMigrationMySqlDriver(t *testing.T) {
 
 // --- Supporting mock types ---
 
-type mockMigrationMySqlDriver struct {
+type mockMigrationPostgresDriver struct {
 	name string
 	up   string
 	down string
 }
 
-func (m *mockMigrationMySqlDriver) Name() string       { return m.name }
-func (m *mockMigrationMySqlDriver) UpScript() string   { return m.up }
-func (m *mockMigrationMySqlDriver) DownScript() string { return m.down }
+func (m *mockMigrationPostgresDriver) Name() string       { return m.name }
+func (m *mockMigrationPostgresDriver) UpScript() string   { return m.up }
+func (m *mockMigrationPostgresDriver) DownScript() string { return m.down }
